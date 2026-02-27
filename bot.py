@@ -4,6 +4,7 @@ import json
 import sqlite3
 import sys
 from datetime import datetime
+import re
 
 # -------------------------
 # Load config
@@ -132,6 +133,38 @@ def resolve_user_object(guild, user_id: int):
         return member  # full Member object
 
     return None  # not in server
+
+async def resolve_channel(guild: discord.Guild, argument: str):
+    argument = argument.strip()
+
+    # 1️⃣ Check mention format <#1234567890>
+    match = re.match(r"<#(\d+)>", argument)
+    if match:
+        channel_id = int(match.group(1))
+        channel = guild.get_channel(channel_id)
+        if channel:
+            return channel
+        try:
+            return await guild.fetch_channel(channel_id)
+        except (discord.NotFound, discord.Forbidden):
+            return None
+
+    # 2️⃣ Check if raw ID
+    if argument.isdigit():
+        channel_id = int(argument)
+        channel = guild.get_channel(channel_id)
+        if channel:
+            return channel
+        try:
+            return await guild.fetch_channel(channel_id)
+        except (discord.NotFound, discord.Forbidden):
+            return None
+
+    # 3️⃣ Check by name (remove # if included)
+    if argument.startswith("#"):
+        argument = argument[1:]
+    channel = discord.utils.get(guild.channels, name=argument)
+    return channel
 
 # -------------------------
 # Events
@@ -429,6 +462,45 @@ async def sqlrun(ctx, *, query):
         )
 
         await ctx.send(embed=embed)
+
+@bot.command(help="Kicks member")
+async def kick(ctx,user_input,reason):
+    pass
+
+
+@bot.command()
+async def join_vc(ctx, channel_arg: str = None):
+    if channel_arg is None:
+        # Default: join the author's VC
+        if ctx.author.voice is None:
+            await ctx.send("You're not in a voice channel.")
+            return
+        channel = ctx.author.voice.channel
+    else:
+        # Resolve by mention, ID, or name
+        channel = await resolve_channel(ctx.guild, channel_arg)
+        if channel is None or not isinstance(channel, discord.VoiceChannel):
+            await ctx.send("Could not find that voice channel or it's not a voice channel.")
+            return
+
+    vc = ctx.voice_client
+    if vc is None:
+        await channel.connect()
+    else:
+        await vc.move_to(channel)
+
+    await ctx.send(f"Joined {channel.name}!")
+
+@bot.command()
+async def leave(ctx):
+    vc = ctx.voice_client  # get the bot's current VC connection in this guild
+
+    if vc is None:
+        await ctx.send("I'm not in a voice channel!")
+        return
+
+    await vc.disconnect()  # leave the VC
+    await ctx.send("Left the voice channel.")
 
 # -------------------------
 # Example SQLite usage
