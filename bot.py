@@ -464,7 +464,7 @@ async def sqlrun(ctx, *, query):
         await ctx.send(embed=embed)
 
 @bot.command(help="Kicks member")
-async def kick(ctx,user_input,reason):
+async def kick(ctx,user_input,*,reason):
     pass
 
 
