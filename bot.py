@@ -465,6 +465,7 @@ async def sqlrun(ctx, *, query):
 
 @bot.command(help="Kicks member")
 async def kick(ctx,user_input,*,reason):
+    userid = resolve_user(ctx.guild,user_input)
     pass
 
 
