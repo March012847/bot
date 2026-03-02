@@ -485,11 +485,12 @@ async def join_vc(ctx, channel_arg: str = None):
 
     vc = ctx.voice_client
     if vc is None:
+        print(f"Joined {channel.name}")
         await channel.connect()
     else:
         await vc.move_to(channel)
 
-    await ctx.send(f"Joined {channel.name}!")
+    await ctx.send(f"Joined *{channel.mention}*!")
 
 @bot.command()
 async def leave(ctx):
