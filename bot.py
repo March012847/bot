@@ -167,6 +167,46 @@ async def resolve_channel(guild: discord.Guild, argument: str):
     channel = discord.utils.get(guild.channels, name=argument)
     return channel
 
+
+async def safe_connect(channel: discord.VoiceChannel, ctx: commands.Context) -> discord.VoiceClient | None:
+    """
+    Safely connect to a voice channel, handling stale sessions and 4017 errors.
+    Returns the connected VoiceClient or None if failed.
+    """
+    vc = ctx.voice_client
+
+    # Disconnect stale session if already connected elsewhere
+    if vc and vc.is_connected():
+        try:
+            await vc.disconnect()
+            await asyncio.sleep(1)  # small delay to let Discord register disconnect
+        except Exception:
+            pass
+
+    # Attempt to connect with reconnect=False to avoid old session reuse
+    for attempt in range(2):  # retry once on 4017
+        try:
+            vc = await channel.connect(reconnect=False)
+            return vc
+        except discord.errors.ConnectionClosed as e:
+            if e.code == 4017:
+                await asyncio.sleep(2)  # wait before retry
+                continue
+            else:
+                await ctx.send(f"Failed to join voice: {e}")
+                return None
+        except discord.OpusNotLoaded:
+            await ctx.send("Opus library not loaded; cannot join voice.")
+            return None
+        except Exception as e:
+            await ctx.send(f"Unexpected error: {e}")
+            return None
+
+    await ctx.send("Failed to join voice after retrying.")
+    return None
+
+
+
 # -------------------------
 # Events
 # -------------------------
@@ -472,6 +512,7 @@ async def kick(ctx,user_input,*,reason):
 
 @bot.command()
 async def join_vc(ctx, channel_arg: str = None):
+    # Determine the target channel
     if channel_arg is None:
         if ctx.author.voice is None:
             await ctx.send("You're not in a voice channel.")
@@ -480,40 +521,25 @@ async def join_vc(ctx, channel_arg: str = None):
     else:
         channel = await resolve_channel(ctx.guild, channel_arg)
         if channel is None or not isinstance(channel, discord.VoiceChannel):
-            await ctx.send("Could not find that voice channel.")
+            await ctx.send("Could not find that voice channel or it's not a voice channel.")
             return
 
-    # Disconnect stale VC
-    vc = ctx.voice_client
-    if vc and vc.is_connected():
-        await vc.disconnect()
-        await asyncio.sleep(1)  # give Discord a moment to register
+    vc = await safe_connect(channel, ctx)
+    if vc:
+        await ctx.send(f"✅ Joined *{channel.mention}*!")
 
-    # Try connecting
-    try:
-        vc = await channel.connect(reconnect=False)
-        await ctx.send(f"Joined *{channel.mention}*!")
-    except discord.errors.ConnectionClosed as e:
-        if e.code == 4017:
-            await ctx.send("Stale session detected. Retrying connection...")
-            await asyncio.sleep(2)
-            vc = await channel.connect(reconnect=False)
-            await ctx.send(f"Joined *{channel.mention}*!")
-        else:
-            await ctx.send(f"Failed to join voice: {e}")
-    except Exception as e:
-        await ctx.send(f"Unexpected error: {e}")
 
 @bot.command()
 async def leave(ctx):
-    vc = ctx.voice_client  # get the bot's current VC connection in this guild
-
-    if vc is None:
+    vc = ctx.voice_client
+    if vc and vc.is_connected():
+        try:
+            await vc.disconnect()
+            await ctx.send("✅ Left the voice channel.")
+        except Exception as e:
+            await ctx.send(f"Error leaving voice channel: {e}")
+    else:
         await ctx.send("I'm not in a voice channel!")
-        return
-
-    await vc.disconnect()  # leave the VC
-    await ctx.send("Left the voice channel.")
 
 # -------------------------
 # Example SQLite usage
