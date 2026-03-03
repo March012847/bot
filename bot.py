@@ -5,6 +5,7 @@ import sqlite3
 import sys
 from datetime import datetime
 import re
+import asyncio
 
 # -------------------------
 # Load config
@@ -479,28 +480,29 @@ async def join_vc(ctx, channel_arg: str = None):
     else:
         channel = await resolve_channel(ctx.guild, channel_arg)
         if channel is None or not isinstance(channel, discord.VoiceChannel):
-            await ctx.send("Could not find that voice channel or it's not a voice channel.")
+            await ctx.send("Could not find that voice channel.")
             return
 
-    # Disconnect stale voice client
+    # Disconnect stale VC
     vc = ctx.voice_client
     if vc and vc.is_connected():
-        if vc.channel.id != channel.id:
-            await vc.disconnect()
+        await vc.disconnect()
+        await asyncio.sleep(1)  # give Discord a moment to register
 
+    # Try connecting
     try:
-        vc = await channel.connect(reconnect=False)  # prevent old session reuse
-        await ctx.send(f"Joined *{channel.mention}*!")
-    except discord.ClientException:
-        await ctx.send("Already connected somewhere else. Disconnecting stale session...")
-        if vc:
-            await vc.disconnect()
         vc = await channel.connect(reconnect=False)
         await ctx.send(f"Joined *{channel.mention}*!")
-    except discord.OpusNotLoaded:
-        await ctx.send("Opus library not loaded; cannot join voice.")
+    except discord.errors.ConnectionClosed as e:
+        if e.code == 4017:
+            await ctx.send("Stale session detected. Retrying connection...")
+            await asyncio.sleep(2)
+            vc = await channel.connect(reconnect=False)
+            await ctx.send(f"Joined *{channel.mention}*!")
+        else:
+            await ctx.send(f"Failed to join voice: {e}")
     except Exception as e:
-        await ctx.send(f"Failed to join voice: {e}")
+        await ctx.send(f"Unexpected error: {e}")
 
 @bot.command()
 async def leave(ctx):
