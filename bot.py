@@ -472,26 +472,35 @@ async def kick(ctx,user_input,*,reason):
 @bot.command()
 async def join_vc(ctx, channel_arg: str = None):
     if channel_arg is None:
-        # Default: join the author's VC
         if ctx.author.voice is None:
             await ctx.send("You're not in a voice channel.")
             return
         channel = ctx.author.voice.channel
     else:
-        # Resolve by mention, ID, or name
         channel = await resolve_channel(ctx.guild, channel_arg)
         if channel is None or not isinstance(channel, discord.VoiceChannel):
             await ctx.send("Could not find that voice channel or it's not a voice channel.")
             return
 
+    # Disconnect stale voice client
     vc = ctx.voice_client
-    if vc is None:
-        print(f"Joined {channel.name}")
-        await channel.connect()
-    else:
-        await vc.move_to(channel)
+    if vc and vc.is_connected():
+        if vc.channel.id != channel.id:
+            await vc.disconnect()
 
-    await ctx.send(f"Joined *{channel.mention}*!")
+    try:
+        vc = await channel.connect(reconnect=False)  # prevent old session reuse
+        await ctx.send(f"Joined *{channel.mention}*!")
+    except discord.ClientException:
+        await ctx.send("Already connected somewhere else. Disconnecting stale session...")
+        if vc:
+            await vc.disconnect()
+        vc = await channel.connect(reconnect=False)
+        await ctx.send(f"Joined *{channel.mention}*!")
+    except discord.OpusNotLoaded:
+        await ctx.send("Opus library not loaded; cannot join voice.")
+    except Exception as e:
+        await ctx.send(f"Failed to join voice: {e}")
 
 @bot.command()
 async def leave(ctx):
