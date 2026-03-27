@@ -205,6 +205,66 @@ async def safe_connect(channel: discord.VoiceChannel, ctx: commands.Context) -> 
     await ctx.send("Failed to join voice after retrying.")
     return None
 
+async def join_voice_channel(ctx, channel: discord.VoiceChannel | None = None) -> discord.VoiceClient | None:
+    """
+    Safely joins a voice channel.
+    - Handles stale sessions (4017)
+    - Handles missing permissions
+    - Avoids duplicate connections
+    Returns the VoiceClient or None on failure.
+    """
+
+    # 1️⃣ Determine channel
+    if channel is None:
+        if ctx.author.voice is None:
+            await ctx.send("You're not in a voice channel and no channel was specified.")
+            return None
+        channel = ctx.author.voice.channel
+
+    # 2️⃣ Check bot permissions
+    perms = channel.permissions_for(ctx.guild.me)
+    if not perms.connect:
+        await ctx.send("❌ I don't have permission to connect to this voice channel.")
+        return None
+    if not perms.speak:
+        await ctx.send("❌ I don't have permission to speak in this voice channel.")
+        return None
+
+    # 3️⃣ Disconnect stale session if needed
+    vc: discord.VoiceClient | None = ctx.voice_client
+    if vc and vc.is_connected():
+        try:
+            await vc.disconnect()
+            await asyncio.sleep(2)  # small delay to ensure session clears
+        except Exception:
+            pass
+
+    # 4️⃣ Attempt to connect (retry once on 4017)
+    for attempt in range(2):
+        try:
+            vc = await channel.connect(reconnect=False)
+            await ctx.send(f"✅ Joined voice channel: *{channel.name}*")
+            return vc
+
+        except discord.errors.ConnectionClosed as e:
+            if e.code == 4017:
+                # Session invalid, retry after delay
+                await asyncio.sleep(3)
+                continue
+            await ctx.send(f"❌ Connection closed unexpectedly: {e}")
+            return None
+
+        except discord.OpusNotLoaded:
+            await ctx.send("❌ Opus library not loaded; cannot join voice.")
+            return None
+
+        except Exception as e:
+            await ctx.send(f"❌ Unexpected error: {e}")
+            return None
+
+    await ctx.send("❌ Failed to join voice channel after retrying.")
+    return None
+
 
 
 # -------------------------
@@ -511,22 +571,16 @@ async def kick(ctx,user_input,*,reason):
 
 
 @bot.command()
-async def join_vc(ctx, channel_arg: str = None):
-    # Determine the target channel
-    if channel_arg is None:
-        if ctx.author.voice is None:
-            await ctx.send("You're not in a voice channel.")
-            return
-        channel = ctx.author.voice.channel
-    else:
-        channel = await resolve_channel(ctx.guild, channel_arg)
-        if channel is None or not isinstance(channel, discord.VoiceChannel):
+async def join_vc(ctx, *, channel_arg: str = None):
+    target_channel = None
+    if channel_arg:
+        target_channel = await resolve_channel(ctx.guild, channel_arg)
+
+        if target_channel is None or not isinstance(target_channel, discord.VoiceChannel):
             await ctx.send("Could not find that voice channel or it's not a voice channel.")
             return
 
-    vc = await safe_connect(channel, ctx)
-    if vc:
-        await ctx.send(f"✅ Joined *{channel.mention}*!")
+    await join_voice_channel(ctx, target_channel)
 
 
 @bot.command()
